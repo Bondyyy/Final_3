@@ -143,7 +143,7 @@ if uploaded_files and model is not None:
         with col:
             # Dùng container để đóng khung cho mỗi kết quả
             with st.container(border=True):
-                st.image(image_data, caption=f"{uploaded_file.name}",use_column_width=True)
+                st.image(image_data, caption=f"{uploaded_file.name}",use_container_width=True)
                 
                 # Dự đoán và lấy kết quả cho từng ảnh
                 predicted_class, confidence = predict(model, image_data)
