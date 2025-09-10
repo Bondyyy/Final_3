@@ -119,27 +119,27 @@ with col1:
         st.header("💡 Kết quả Phân loại")
 
     # Tạo 3 cột để hiển thị kết quả 
-    cols = st.columns(3)
-    col_index = 0
+        cols = st.columns(3)
+        col_index = 0
 
     # Lặp qua từng file ảnh đã được tải lên
-    for uploaded_file in uploaded_files:
-        image_data = uploaded_file.getvalue()
+        for uploaded_file in uploaded_files:
+            image_data = uploaded_file.getvalue()
 
         # Đặt kết quả của mỗi ảnh vào một cột riêng
-        with cols[col_index]:
-            st.image(image_data, caption=f"Ảnh: {uploaded_file.name}", width=True)
+            with cols[col_index]:
+                st.image(image_data, caption=f"Ảnh: {uploaded_file.name}", width=True)
 
             # Phân loại và hiển thị kết quả
-            predicted_class, confidence = predict(model, image_data)
+                predicted_class, confidence = predict(model, image_data)
             # ... (code hiển thị kết quả 'Tốt' hoặc 'Lỗi') ...
 
         # Chuyển sang cột tiếp theo cho ảnh kế tiếp
-        col_index = (col_index + 1) % len(cols)
+            col_index = (col_index + 1) % len(cols)
 
 with col2:
     st.header("💡 Kết quả Phân loại")
-    if uploaded_files is not None and model is not None:
+    if uploaded_file is not None and model is not None:
         with st.spinner("Đang phân tích..."):
             predicted_class, confidence = predict(model, image_data)
 
