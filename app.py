@@ -139,7 +139,7 @@ with col1:
 
 with col2:
     st.header("💡 Kết quả Phân loại")
-    if uploaded_file is not None and model is not None:
+    if uploaded_files is not None and model is not None:
         with st.spinner("Đang phân tích..."):
             predicted_class, confidence = predict(model, image_data)
 
