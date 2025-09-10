@@ -57,16 +57,10 @@ st.markdown("""
 # --- Hàm xử lý ---
 @st.cache_resource
 def load_pytorch_model():
-    """
-    Tải mô hình PyTorch đã được huấn luyện.
-    Thay 'path/to/your/final_model.pth' bằng đường dẫn thực tế
-    hoặc logic để tải mô hình từ Google Drive/S3 nếu cần.
-    """
+
     model = get_model()
-    # Để chạy local, bạn cần tải file final_model.pth về
-    # và đặt nó vào cùng thư mục hoặc cung cấp đường dẫn chính xác.
     try:
-        # Giả sử file model nằm cùng cấp với app.py
+       
         model_path = 'final_model.pth'
         model = load_model(model, model_path)
         model.eval()
@@ -115,14 +109,33 @@ col1, col2 = st.columns(2, gap="large")
 
 with col1:
     st.header("🖼️ Tải ảnh lên")
-    uploaded_file = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "Chọn một ảnh sản phẩm...",
-        type=["jpg", "jpeg", "png"]
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True  
     )
 
-    if uploaded_file is not None:
+    if uploaded_files and model is not None:
+        st.header("💡 Kết quả Phân loại")
+
+    # Tạo 3 cột để hiển thị kết quả 
+    cols = st.columns(3)
+    col_index = 0
+
+    # Lặp qua từng file ảnh đã được tải lên
+    for uploaded_file in uploaded_files:
         image_data = uploaded_file.getvalue()
-        st.image(image_data, caption="Ảnh đã tải lên", use_container_width=True)
+
+        # Đặt kết quả của mỗi ảnh vào một cột riêng
+        with cols[col_index]:
+            st.image(image_data, caption=f"Ảnh: {uploaded_file.name}", width=True)
+
+            # Phân loại và hiển thị kết quả
+            predicted_class, confidence = predict(model, image_data)
+            # ... (code hiển thị kết quả 'Tốt' hoặc 'Lỗi') ...
+
+        # Chuyển sang cột tiếp theo cho ảnh kế tiếp
+        col_index = (col_index + 1) % len(cols)
 
 with col2:
     st.header("💡 Kết quả Phân loại")
@@ -154,7 +167,7 @@ st.sidebar.info(
     """
     1. **Tải ảnh lên:** Nhấn vào 'Browse files' và chọn ảnh sản phẩm đúc bạn muốn kiểm tra.
     2. **Xem kết quả:** Mô hình sẽ tự động phân loại ảnh là 'Tốt' hoặc 'Lỗi'.
-    3. **Phân tích sâu:** Nếu sản phẩm bị lỗi, bạn có thể vào trang 'Phân Tích Loại Lỗi' từ thanh điều hướng bên cạnh để xem vị trí và loại lỗi chi tiết.
+    3. **Phân tích sâu:** Nếu sản phẩm bị lỗi,  có thể vào trang 'Phân Tích Loại Lỗi' từ thanh điều hướng bên cạnh để xem vị trí và loại lỗi chi tiết.
     """
 )
 st.sidebar.title("Về dự án")

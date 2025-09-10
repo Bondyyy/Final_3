@@ -1,154 +1,95 @@
 import streamlit as st
-from PIL import Image
-import torch
-from torchvision import transforms
-from utils.model import get_model, load_model
+import cv2
 import numpy as np
-import io
+from PIL import Image
+from utils.analysis import analyze_defect_types_pro, segment_image_hybrid
 
-# Cấu hình trang
 st.set_page_config(
-    page_title="Phân loại Lỗi Sản Phẩm Đúc",
-    page_icon="🏭",
+    page_title="Phân Tích Chi Tiết Lỗi",
+    page_icon="🔍",
     layout="wide",
 )
 
-# --- CSS Tùy chỉnh (giữ nguyên) ---
 st.markdown("""
 <style>
     .st-emotion-cache-1y4p8pa {
         padding-top: 2rem;
     }
-    .st-emotion-cache-1v0mbdj {
-        max-width: 95%;
-    }
     .main-title {
-        font-size: 2.5rem;
+        font-size: 2.2rem;
         font-weight: bold;
-        color: #1E90FF;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .sub-title {
-        font-size: 1.5rem;
-        color: #4682B4;
+        color: #FF4B4B;
         text-align: center;
         margin-bottom: 2rem;
-    }
-    .result-text {
-        font-size: 1.5rem; /* Giảm kích thước font để vừa vặn hơn */
-        font-weight: bold;
-        text-align: center;
-        padding: 0.8rem;
-        border-radius: 10px;
-        margin-top: 10px;
-    }
-    .result-ok {
-        color: #2E8B57;
-        background-color: #D4EDDA;
-    }
-    .result-def {
-        color: #A52A2A;
-        background-color: #F8D7DA;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# --- Hàm xử lý (giữ nguyên) ---
-@st.cache_resource
-def load_pytorch_model():
-    model = get_model()
-    try:
-        model_path = 'final_model.pth'
-        model = load_model(model, model_path)
-        model.eval()
-        return model
-    except FileNotFoundError:
-        st.error("Lỗi: Không tìm thấy tệp 'final_model.pth'. Vui lòng tải tệp mô hình và đặt vào thư mục dự án.")
-        return None
+st.markdown("<h1 class='main-title'>🔍 Phân Tích và Khoanh Vùng Lỗi</h1>", unsafe_allow_html=True)
 
-def predict(model, image_data):
-    if model is None:
-        return None, None
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.Grayscale(num_output_channels=3),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    image = Image.open(io.BytesIO(image_data)).convert("RGB")
-    image_tensor = transform(image).unsqueeze(0).to(device)
-    with torch.no_grad():
-        outputs = model(image_tensor)
-        probabilities = torch.nn.functional.softmax(outputs, dim=1)
-        confidence, predicted_idx = torch.max(probabilities, 1)
-        predicted_class = predicted_idx.item()
-    return predicted_class, confidence.item()
-
-# --- Giao diện ứng dụng ---
-
-# Tiêu đề
-st.markdown("<h1 class='main-title'>🏭 Ứng dụng Phát hiện Lỗi Sản phẩm Đúc</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-title'>Tải lên một hoặc nhiều hình ảnh sản phẩm để kiểm tra chất lượng</p>", unsafe_allow_html=True)
-
-# Tải mô hình
-model = load_pytorch_model()
-
-# 1. Thêm accept_multiple_files=True
-uploaded_files = st.file_uploader(
-    "Chọn một hoặc nhiều ảnh sản phẩm...",
+uploaded_file = st.file_uploader(
+    "Tải lên một ảnh sản phẩm bị lỗi để phân tích...",
     type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True # <<<< THAY ĐỔI QUAN TRỌNG
+    key="analysis_uploader"
 )
 
-if uploaded_files and model is not None:
-    st.header("💡 Kết quả Phân loại")
-    
-    # 2. Tạo các cột để hiển thị kết quả một cách gọn gàng
-    # Bạn có thể thay đổi số 3 để hiển thị nhiều/ít ảnh hơn trên một hàng
-    cols = st.columns(3) 
-    col_index = 0
+if uploaded_file is not None:
+    # Đọc ảnh từ file đã upload
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-    # 3. Dùng vòng lặp để xử lý từng file
-    for uploaded_file in uploaded_files:
-        image_data = uploaded_file.getvalue()
-        
-        # Sử dụng with để đặt mỗi kết quả vào một cột
-        with cols[col_index]:
-            st.image(image_data, caption=f"Ảnh: {uploaded_file.name}", use_container_width=True)
-            
-            with st.spinner(f"Phân tích {uploaded_file.name}..."):
-                predicted_class, confidence = predict(model, image_data)
+    # --- Cột hiển thị ---
+    col1, col2 = st.columns(2)
 
-                class_names = {0: 'Lỗi', 1: 'Tốt'}
-                result = class_names.get(predicted_class, "Không xác định")
-                confidence_percent = confidence * 100
+    with col1:
+        st.subheader("Phân tích loại lỗi (Contour-based)")
+        with st.spinner("Đang tìm và phân loại lỗi..."):
+            try:
+                num_defects, defect_types, img_out = analyze_defect_types_pro(img_cv.copy())
 
-                if result == 'Tốt':
-                    st.markdown(f"<div class='result-text result-ok'>✔️ TỐT ({confidence_percent:.1f}%)</div>", unsafe_allow_html=True)
+                st.image(img_out, channels="BGR", caption=f"Phát hiện {num_defects} vùng lỗi.")
+
+                if num_defects > 0:
+                    st.success(f"**Số lỗi phát hiện:** {num_defects}")
+                    st.write("**Các loại lỗi có thể có:**")
+                    # Đếm số lượng mỗi loại lỗi
+                    defect_counts = {t: defect_types.count(t) for t in set(defect_types)}
+                    for dtype, count in defect_counts.items():
+                        st.markdown(f"- **{dtype}:** {count} vùng")
                 else:
-                    st.markdown(f"<div class='result-text result-def'>❌ LỖI ({confidence_percent:.1f}%)</div>", unsafe_allow_html=True)
+                    st.info("Không phát hiện được vùng lỗi rõ ràng bằng phương pháp này.")
 
-        # Chuyển sang cột tiếp theo, nếu hết hàng thì tạo hàng mới
-        col_index = (col_index + 1) % len(cols)
+            except Exception as e:
+                st.error(f"Đã xảy ra lỗi khi phân tích: {e}")
 
-elif not uploaded_files:
-    st.info("Vui lòng tải ảnh lên để bắt đầu phân loại.")
+    with col2:
+        st.subheader("Phân vùng ảnh (Segmentation)")
+        with st.spinner("Đang thực hiện phân vùng ảnh..."):
+            try:
+                # Resize để xử lý nhanh hơn
+                h, w, _ = img_cv.shape
+                img_resized = cv2.resize(img_cv, (256, int(256 * h/w)))
 
-st.sidebar.title("📖 Hướng dẫn")
-st.sidebar.info(
-    """
-    1. **Tải ảnh lên:** Nhấn vào 'Browse files' và chọn một hoặc nhiều ảnh sản phẩm.
-    2. **Xem kết quả:** Mô hình sẽ tự động phân loại tất cả các ảnh đã tải lên.
-    3. **Phân tích sâu:** Nếu sản phẩm bị lỗi, bạn có thể vào trang 'Phân Tích Loại Lỗi' để xem chi tiết.
-    """
-)
-st.sidebar.title("Về dự án")
-st.sidebar.success(
-    """
-    Dự án này sử dụng mô hình học sâu **EfficientNetV2-S** để phân loại sản phẩm.
-    """
-)
+                segmented_img = segment_image_hybrid(img_resized)
+
+                # Hiển thị
+                display_col1, display_col2 = st.columns(2)
+                with display_col1:
+                    st.image(img_resized, channels="BGR", caption="Ảnh gốc (resized)")
+                with display_col2:
+                    st.image(segmented_img, channels="BGR", caption="Ảnh đã phân vùng")
+
+                st.info(
+                """
+                **Giải thích:**
+                - Phương pháp này sử dụng thuật toán gom cụm (DBSCAN + Fuzzy C-Means) để nhóm các pixel có màu sắc tương tự nhau.
+                - Các vùng có màu khác biệt (được tô màu ngẫu nhiên) có thể là các vùng lỗi hoặc các vùng có đặc điểm bề mặt khác thường.
+                """
+                )
+
+            except Exception as e:
+                st.error(f"Đã xảy ra lỗi khi phân vùng: {e}")
+
+else:
+    st.info("Vui lòng tải lên một ảnh để bắt đầu phân tích.")
