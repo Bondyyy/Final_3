@@ -63,33 +63,33 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"Đã xảy ra lỗi khi phân tích: {e}")
 
-    with col2:
-        st.subheader("Phân vùng ảnh (Segmentation)")
-        with st.spinner("Đang thực hiện phân vùng ảnh..."):
-            try:
-                # Resize để xử lý nhanh hơn
-                h, w, _ = img_cv.shape
-                img_resized = cv2.resize(img_cv, (256, int(256 * h/w)))
+    # with col2:
+    #     st.subheader("Phân vùng ảnh (Segmentation)")
+    #     with st.spinner("Đang thực hiện phân vùng ảnh..."):
+    #         try:
+    #             # Resize để xử lý nhanh hơn
+    #             h, w, _ = img_cv.shape
+    #             img_resized = cv2.resize(img_cv, (256, int(256 * h/w)))
 
-                segmented_img = segment_image_hybrid(img_resized)
+    #             segmented_img = segment_image_hybrid(img_resized)
 
-                # Hiển thị
-                display_col1, display_col2 = st.columns(2)
-                with display_col1:
-                    st.image(img_resized, channels="BGR", caption="Ảnh gốc (resized)")
-                with display_col2:
-                    st.image(segmented_img, channels="BGR", caption="Ảnh đã phân vùng")
+    #             # Hiển thị
+    #             display_col1, display_col2 = st.columns(2)
+    #             with display_col1:
+    #                 st.image(img_resized, channels="BGR", caption="Ảnh gốc (resized)")
+    #             with display_col2:
+    #                 st.image(segmented_img, channels="BGR", caption="Ảnh đã phân vùng")
 
-                st.info(
-                """
-                **Giải thích:**
-                - Phương pháp này sử dụng thuật toán gom cụm (DBSCAN + Fuzzy C-Means) để nhóm các pixel có màu sắc tương tự nhau.
-                - Các vùng có màu khác biệt (được tô màu ngẫu nhiên) có thể là các vùng lỗi hoặc các vùng có đặc điểm bề mặt khác thường.
-                """
-                )
+    #             st.info(
+    #             """
+    #             **Giải thích:**
+    #             - Phương pháp này sử dụng thuật toán gom cụm (DBSCAN + Fuzzy C-Means) để nhóm các pixel có màu sắc tương tự nhau.
+    #             - Các vùng có màu khác biệt (được tô màu ngẫu nhiên) có thể là các vùng lỗi hoặc các vùng có đặc điểm bề mặt khác thường.
+    #             """
+    #             )
 
-            except Exception as e:
-                st.error(f"Đã xảy ra lỗi khi phân vùng: {e}")
+    #         except Exception as e:
+    #             st.error(f"Đã xảy ra lỗi khi phân vùng: {e}")
 
 else:
     st.info("Vui lòng tải lên một ảnh để bắt đầu phân tích.")

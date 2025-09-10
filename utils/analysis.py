@@ -50,25 +50,25 @@ def analyze_defect_types_pro(img_cv):
         x, y, w_cnt, h_cnt = cv2.boundingRect(cnt)
         aspect_ratio = max(w_cnt, h_cnt) / (min(w_cnt, h_cnt) + 1e-6)
 
-        defect_type = "Không xác định"
+        defect_type = "Khong xac dinh"
         color = (0, 255, 255) # Vàng cho không xác định
 
         # Quy tắc phân loại
         if circularity < 0.35 and aspect_ratio > 2.5:
-            defect_type = "Nứt"
+            defect_type = "Nut"
             color = (255, 0, 0) # Xanh dương cho Nứt
         elif circularity > 0.6 and aspect_ratio < 1.8:
-            defect_type = "Lỗ khí"
+            defect_type = "Lo khi"
             color = (0, 0, 255) # Đỏ cho Lỗ khí
         else:
             # Kiểm tra vị trí để xác định "Mẻ"
             border_margin = int(0.03 * min(h, w))
             if (x <= border_margin or y <= border_margin or
                 x + w_cnt >= w - border_margin or y + h_cnt >= h - border_margin):
-                defect_type = "Mẻ"
+                defect_type = "Me"
                 color = (0, 255, 0) # Xanh lá cho Mẻ
             else:
-                 defect_type = "Trầy xước"
+                 defect_type = "Tray xuoc"
                  color = (255, 0, 255) # Tím cho Trầy xước
 
 
