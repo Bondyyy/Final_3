@@ -32,7 +32,7 @@ performance_data = {
         "Tiêu tốn GPU Memory (Colab)"
     ],
     "Giá trị": [
-        "~99.xx %", # Thay bằng giá trị thực từ notebook của bạn
+        "~99.xx %", 
         "99.69 %",
         "**99.86 %**",
         "~0.01xx",

@@ -43,7 +43,7 @@ if uploaded_file is not None:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Phân tích loại lỗi (Contour-based)")
+        st.subheader("Phân tích loại lỗi")
         with st.spinner("Đang tìm và phân loại lỗi..."):
             try:
                 num_defects, defect_types, img_out = analyze_defect_types_pro(img_cv.copy())
