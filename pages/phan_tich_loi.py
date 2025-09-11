@@ -2,9 +2,18 @@ import streamlit as st
 from PIL import Image
 import cv2
 import numpy as np
+import torch
+import torch.nn as nn
+from torchvision import models
+from torchvision import transforms
+from collections import Counter
+import io
 
-# --- Các tham số cho việc phát hiện lỗi (Từ file s.py) ---
-# Bạn có thể tinh chỉnh các giá trị này để thay đổi độ nhạy
+# ==============================================================================
+# PHẦN 1: CÁC HÀM XỬ LÝ ẢNH (COMPUTER VISION - CV)
+# Giữ nguyên từ file phan_tich_loi.py gốc của bạn
+# ==============================================================================
+
 PARAMS = {
     "min_area_ratio": 0.0001,
     "max_area_ratio": 0.1,
@@ -13,8 +22,6 @@ PARAMS = {
     "pore_circularity_thresh": 0.7,
 }
 
-# --- Các hàm xử lý ảnh (Từ file s.py) ---
-
 def preprocess_blackhat(gray_image):
     """Sử dụng Black Hat để làm nổi bật các vùng tối trên nền sáng."""
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
@@ -22,96 +29,135 @@ def preprocess_blackhat(gray_image):
     _, mask = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
     return mask
 
-def classify_contour(contour, image_area, image_shape):
+def classify_contour(contour, image_area):
     """Phân loại một contour thành Nứt, Mẻ, hoặc Lỗ khí."""
     area = cv2.contourArea(contour)
     perimeter = cv2.arcLength(contour, True)
 
-    # 1. Phân loại "Nứt" (Crack) dựa trên tỷ lệ khung hình
     x, y, w, h = cv2.boundingRect(contour)
     aspect_ratio = max(w, h) / (min(w, h) + 1e-6)
     if aspect_ratio > PARAMS["crack_aspect_ratio_thresh"]:
-        return "Nứt", area, perimeter
+        return "Nứt"
 
-    # 2. Phân loại "Mẻ" (Chip) và "Lỗ khí" (Pore) dựa trên độ tròn
     if perimeter > 0:
         circularity = 4 * np.pi * (area / (perimeter * perimeter))
         if circularity < PARAMS["chip_circularity_thresh"]:
-            return "Mẻ", area, perimeter
+            return "Mẻ"
         elif circularity >= PARAMS["pore_circularity_thresh"]:
-            return "Lỗ khí", area, perimeter
+            return "Lỗ khí"
             
-    return None, area, perimeter
+    return None
 
 def analyze_image_cv(image_pil):
     """
-    Phân tích ảnh sử dụng các phương pháp Computer Vision (CV).
-    
-    Args:
-        image_pil (PIL.Image): Ảnh đầu vào.
-
-    Returns:
-        tuple: Ảnh đã được đánh dấu và một dictionary chứa số lượng từng loại lỗi.
+    Phân tích chi tiết các loại lỗi trên ảnh đã được xác định là có lỗi.
     """
     img_cv = np.array(image_pil.convert('RGB'))
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
     
-    # Tiền xử lý ảnh để tìm các vùng khả nghi
     mask = preprocess_blackhat(gray)
-
-    # Tìm các đường viền (contours) từ mask
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    h, w = gray.shape
-    img_area = float(h * w)
+    img_area = float(gray.shape[0] * gray.shape[1])
     
-    counts = {"Nứt": 0, "Mẻ": 0, "Lỗ khí": 0}
     img_annotated = img_cv.copy()
+    found_defects = []
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Bỏ qua các nhiễu quá nhỏ hoặc các vùng quá lớn
-        if area < PARAMS["min_area_ratio"] * img_area or area > PARAMS["max_area_ratio"] * img_area:
+        if not (PARAMS["min_area_ratio"] * img_area < area < PARAMS["max_area_ratio"] * img_area):
             continue
 
-        defect_type, _, _ = classify_contour(cnt, img_area, gray.shape)
+        defect_type = classify_contour(cnt, img_area)
         
         if defect_type:
-            counts[defect_type] += 1
-            
-            # Chọn màu để vẽ lên ảnh
-            color = (0, 0, 255) # Đỏ cho Nứt
-            if defect_type == "Mẻ":
-                color = (0, 255, 0) # Xanh lá cho Mẻ
-            elif defect_type == "Lỗ khí":
-                color = (255, 0, 0) # Xanh dương cho Lỗ khí
-
-            # Vẽ đường viền và ghi nhãn
+            found_defects.append(defect_type)
+            color = {"Nứt": (0, 0, 255), "Mẻ": (0, 255, 0), "Lỗ khí": (255, 0, 0)}.get(defect_type)
             cv2.drawContours(img_annotated, [cnt], -1, color, 3)
             x, y, _, _ = cv2.boundingRect(cnt)
             cv2.putText(img_annotated, defect_type, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-    # Chuyển đổi ảnh openCV (BGR) ngược lại thành PIL (RGB) để hiển thị
-    img_annotated_rgb = cv2.cvtColor(img_annotated, cv2.COLOR_BGR2RGB)
-    annotated_pil = Image.fromarray(img_annotated_rgb)
+    annotated_pil = Image.fromarray(cv2.cvtColor(img_annotated, cv2.COLOR_BGR2RGB))
+    defect_counts = Counter(found_defects)
+    return annotated_pil, defect_counts
 
-    return annotated_pil, counts
+# ==============================================================================
+# PHẦN 2: CÁC HÀM LIÊN QUAN ĐẾN MÔ HÌNH AI (PYTORCH)
+# Tích hợp từ file model.py và app.py của bạn
+# ==============================================================================
 
-# --- Giao diện ứng dụng Streamlit ---
-def main():
-    st.set_page_config(layout="wide", page_title="Phân Tích Lỗi Sản Phẩm (CV)")
-    st.title("Hệ thống Phân tích Lỗi bằng Xử lý ảnh")
+def get_model(num_classes=2, dropout_rate=0.3):
+    """Tạo một mô hình EfficientNetV2-S."""
+    model = models.efficientnet_v2_s(weights=models.EfficientNet_V2_S_Weights.IMAGENET1K_V1)
+    in_features = model.classifier[1].in_features
+    model.classifier = nn.Sequential(
+        nn.Dropout(p=dropout_rate),
+        nn.Linear(in_features, num_classes)
+    )
+    return model
+
+@st.cache_resource
+def load_pytorch_model(model_path='final_model.pth'):
+    """Tải và cache mô hình PyTorch để không phải tải lại mỗi lần."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = get_model()
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+        model.eval()
+        return model
+    except FileNotFoundError:
+        st.error(f"Lỗi: Không tìm thấy tệp '{model_path}'. Vui lòng đảm bảo tệp mô hình nằm đúng vị trí.")
+        return None
+    except Exception as e:
+        st.error(f"Đã xảy ra lỗi khi tải mô hình: {e}")
+        return None
+
+def predict_image_class(model, image_pil):
+    """Dự đoán một ảnh là Tốt (OK) hay có Lỗi (Defective)."""
+    if model is None: return None, None
     
-    st.info("Đây là phiên bản sử dụng các thuật toán xử lý ảnh truyền thống (OpenCV), tương tự code của bạn bạn.")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    image = image_pil.convert("RGB")
+    image_tensor = transform(image).unsqueeze(0).to(device)
 
-    # --- File uploader ---
+    with torch.no_grad():
+        outputs = model(image_tensor)
+        probabilities = torch.nn.functional.softmax(outputs, dim=1)
+        confidence, predicted_idx = torch.max(probabilities, 1)
+        # Chú ý: class_names cần khớp với lúc bạn huấn luyện model
+        # Giả định: 0 = Lỗi (Defective), 1 = Tốt (OK)
+        class_names = {0: 'Lỗi', 1: 'Tốt'}
+        predicted_class = class_names.get(predicted_idx.item())
+        return predicted_class, confidence.item()
+
+# ==============================================================================
+# PHẦN 3: GIAO DIỆN ỨNG DỤNG STREAMLIT (ĐÃ CẬP NHẬT LOGIC)
+# ==============================================================================
+
+def main():
+    st.set_page_config(layout="wide", page_title="Phân Tích Lỗi Sản Phẩm")
+    st.title("Hệ Thống Kiểm Tra Chất Lượng Sản Phẩm (AI + CV)")
+    
+    st.info("Quy trình: **AI phân loại (Tốt/Lỗi) ➔ Nếu Lỗi, CV phân tích chi tiết.**")
+
+    # Tải mô hình AI
+    with st.spinner("Đang tải mô hình AI..."):
+        model = load_pytorch_model()
+
     uploaded_file = st.file_uploader(
         "Tải lên ảnh sản phẩm cần phân tích", 
         type=["jpg", "jpeg", "png"]
     )
 
-    if uploaded_file is not None:
+    if uploaded_file is not None and model is not None:
         image = Image.open(uploaded_file)
         
         col1, col2 = st.columns(2)
@@ -122,22 +168,32 @@ def main():
 
         with col2:
             st.subheader("Kết quả Phân tích")
-            with st.spinner('Đang phân tích...'):
-                annotated_image, defect_counts = analyze_image_cv(image)
-                
-                total_defects = sum(defect_counts.values())
+            with st.spinner('Bước 1: AI đang phân loại...'):
+                # BƯỚC 1: DÙNG AI ĐỂ PHÂN LOẠI TRƯỚC
+                predicted_class, confidence = predict_image_class(model, image)
+                confidence_percent = confidence * 100
 
-                if total_defects > 0:
-                    st.image(annotated_image, caption="Các lỗi đã được phát hiện.", use_column_width=True)
-                    st.warning(f"**Tổng số lỗi phát hiện: {total_defects}**")
-                    
-                    st.subheader("Chi tiết các loại lỗi:")
-                    for defect, count in defect_counts.items():
-                        if count > 0:
+            if predicted_class == 'Tốt':
+                st.success(f"**Kết quả AI: TỐT** (Độ tin cậy: {confidence_percent:.2f}%)")
+                st.image(image, caption="Sản phẩm không phát hiện lỗi.", use_column_width=True)
+            
+            elif predicted_class == 'Lỗi':
+                st.error(f"**Kết quả AI: LỖI** (Độ tin cậy: {confidence_percent:.2f}%)")
+                with st.spinner('Bước 2: CV đang phân tích chi tiết loại lỗi...'):
+                    # BƯỚC 2: NẾU LỖI, MỚI DÙNG CV PHÂN TÍCH
+                    annotated_image, defect_counts = analyze_image_cv(image)
+                    total_defects = sum(defect_counts.values())
+
+                    if total_defects > 0:
+                        st.image(annotated_image, caption="Các loại lỗi đã được khoanh vùng.", use_column_width=True)
+                        st.warning(f"**Tổng số vùng lỗi phát hiện bởi CV: {total_defects}**")
+                        st.subheader("Chi tiết các loại lỗi:")
+                        for defect, count in defect_counts.items():
                             st.write(f"- **{defect}**: {count} vùng")
-                else:
-                    st.image(image, use_column_width=True)
-                    st.success("**Sản phẩm không có lỗi.**")
+                    else:
+                        st.info("AI phát hiện có lỗi, nhưng các thuật toán CV không xác định được loại lỗi cụ thể. Cần kiểm tra thủ công.")
+            else:
+                st.warning("Không thể phân loại ảnh này. Vui lòng thử ảnh khác.")
 
 if __name__ == "__main__":
     main()
