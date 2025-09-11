@@ -1,95 +1,143 @@
 import streamlit as st
+from PIL import Image
 import cv2
 import numpy as np
-from PIL import Image
-from utils.analysis import analyze_defect_types_pro, segment_image_hybrid
 
-st.set_page_config(
-    page_title="Phân Tích Chi Tiết Lỗi",
-    page_icon="🔍",
-    layout="wide",
-)
+# --- Các tham số cho việc phát hiện lỗi (Từ file s.py) ---
+# Bạn có thể tinh chỉnh các giá trị này để thay đổi độ nhạy
+PARAMS = {
+    "min_area_ratio": 0.0001,
+    "max_area_ratio": 0.1,
+    "crack_aspect_ratio_thresh": 4.0,
+    "chip_circularity_thresh": 0.5,
+    "pore_circularity_thresh": 0.7,
+}
 
-st.markdown("""
-<style>
-    .st-emotion-cache-1y4p8pa {
-        padding-top: 2rem;
-    }
-    .main-title {
-        font-size: 2.2rem;
-        font-weight: bold;
-        color: #FF4B4B;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# --- Các hàm xử lý ảnh (Từ file s.py) ---
 
+def preprocess_blackhat(gray_image):
+    """Sử dụng Black Hat để làm nổi bật các vùng tối trên nền sáng."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
+    blackhat = cv2.morphologyEx(gray_image, cv2.MORPH_BLACKHAT, kernel)
+    _, mask = cv2.threshold(blackhat, 30, 255, cv2.THRESH_BINARY)
+    return mask
 
-st.markdown("<h1 class='main-title'>🔍 Phân Tích và Khoanh Vùng Lỗi</h1>", unsafe_allow_html=True)
+def classify_contour(contour, image_area, image_shape):
+    """Phân loại một contour thành Nứt, Mẻ, hoặc Lỗ khí."""
+    area = cv2.contourArea(contour)
+    perimeter = cv2.arcLength(contour, True)
 
-uploaded_file = st.file_uploader(
-    "Tải lên một ảnh sản phẩm bị lỗi để phân tích...",
-    type=["jpg", "jpeg", "png"],
-    key="analysis_uploader"
-)
+    # 1. Phân loại "Nứt" (Crack) dựa trên tỷ lệ khung hình
+    x, y, w, h = cv2.boundingRect(contour)
+    aspect_ratio = max(w, h) / (min(w, h) + 1e-6)
+    if aspect_ratio > PARAMS["crack_aspect_ratio_thresh"]:
+        return "Nứt", area, perimeter
 
-if uploaded_file is not None:
-    # Đọc ảnh từ file đã upload
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    img_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    # 2. Phân loại "Mẻ" (Chip) và "Lỗ khí" (Pore) dựa trên độ tròn
+    if perimeter > 0:
+        circularity = 4 * np.pi * (area / (perimeter * perimeter))
+        if circularity < PARAMS["chip_circularity_thresh"]:
+            return "Mẻ", area, perimeter
+        elif circularity >= PARAMS["pore_circularity_thresh"]:
+            return "Lỗ khí", area, perimeter
+            
+    return None, area, perimeter
 
-    # --- Cột hiển thị ---
-    col1, col2 = st.columns(2)
+def analyze_image_cv(image_pil):
+    """
+    Phân tích ảnh sử dụng các phương pháp Computer Vision (CV).
+    
+    Args:
+        image_pil (PIL.Image): Ảnh đầu vào.
 
-    with col1:
-        st.subheader("Phân tích loại lỗi")
-        with st.spinner("Đang tìm và phân loại lỗi..."):
-            try:
-                num_defects, defect_types, img_out = analyze_defect_types_pro(img_cv.copy())
+    Returns:
+        tuple: Ảnh đã được đánh dấu và một dictionary chứa số lượng từng loại lỗi.
+    """
+    img_cv = np.array(image_pil.convert('RGB'))
+    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Tiền xử lý ảnh để tìm các vùng khả nghi
+    mask = preprocess_blackhat(gray)
 
-                st.image(img_out, channels="BGR", caption=f"Phát hiện {num_defects} vùng lỗi.")
+    # Tìm các đường viền (contours) từ mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                if num_defects > 0:
-                    st.success(f"**Số lỗi phát hiện:** {num_defects}")
-                    st.write("**Các loại lỗi có thể có:**")
-                    # Đếm số lượng mỗi loại lỗi
-                    defect_counts = {t: defect_types.count(t) for t in set(defect_types)}
-                    for dtype, count in defect_counts.items():
-                        st.markdown(f"- **{dtype}:** {count} vùng")
+    h, w = gray.shape
+    img_area = float(h * w)
+    
+    counts = {"Nứt": 0, "Mẻ": 0, "Lỗ khí": 0}
+    img_annotated = img_cv.copy()
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        # Bỏ qua các nhiễu quá nhỏ hoặc các vùng quá lớn
+        if area < PARAMS["min_area_ratio"] * img_area or area > PARAMS["max_area_ratio"] * img_area:
+            continue
+
+        defect_type, _, _ = classify_contour(cnt, img_area, gray.shape)
+        
+        if defect_type:
+            counts[defect_type] += 1
+            
+            # Chọn màu để vẽ lên ảnh
+            color = (0, 0, 255) # Đỏ cho Nứt
+            if defect_type == "Mẻ":
+                color = (0, 255, 0) # Xanh lá cho Mẻ
+            elif defect_type == "Lỗ khí":
+                color = (255, 0, 0) # Xanh dương cho Lỗ khí
+
+            # Vẽ đường viền và ghi nhãn
+            cv2.drawContours(img_annotated, [cnt], -1, color, 3)
+            x, y, _, _ = cv2.boundingRect(cnt)
+            cv2.putText(img_annotated, defect_type, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+    # Chuyển đổi ảnh openCV (BGR) ngược lại thành PIL (RGB) để hiển thị
+    img_annotated_rgb = cv2.cvtColor(img_annotated, cv2.COLOR_BGR2RGB)
+    annotated_pil = Image.fromarray(img_annotated_rgb)
+
+    return annotated_pil, counts
+
+# --- Giao diện ứng dụng Streamlit ---
+def main():
+    st.set_page_config(layout="wide", page_title="Phân Tích Lỗi Sản Phẩm (CV)")
+    st.title("Hệ thống Phân tích Lỗi bằng Xử lý ảnh")
+    
+    st.info("Đây là phiên bản sử dụng các thuật toán xử lý ảnh truyền thống (OpenCV), tương tự code của bạn bạn.")
+
+    # --- File uploader ---
+    uploaded_file = st.file_uploader(
+        "Tải lên ảnh sản phẩm cần phân tích", 
+        type=["jpg", "jpeg", "png"]
+    )
+
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Ảnh Gốc")
+            st.image(image, use_column_width=True)
+
+        with col2:
+            st.subheader("Kết quả Phân tích")
+            with st.spinner('Đang phân tích...'):
+                annotated_image, defect_counts = analyze_image_cv(image)
+                
+                total_defects = sum(defect_counts.values())
+
+                if total_defects > 0:
+                    st.image(annotated_image, caption="Các lỗi đã được phát hiện.", use_column_width=True)
+                    st.warning(f"**Tổng số lỗi phát hiện: {total_defects}**")
+                    
+                    st.subheader("Chi tiết các loại lỗi:")
+                    for defect, count in defect_counts.items():
+                        if count > 0:
+                            st.write(f"- **{defect}**: {count} vùng")
                 else:
-                    st.info("Không phát hiện được vùng lỗi rõ ràng bằng phương pháp này.")
+                    st.image(image, use_column_width=True)
+                    st.success("**Sản phẩm không có lỗi.**")
 
-            except Exception as e:
-                st.error(f"Đã xảy ra lỗi khi phân tích: {e}")
-
-    # with col2:
-    #     st.subheader("Phân vùng ảnh (Segmentation)")
-    #     with st.spinner("Đang thực hiện phân vùng ảnh..."):
-    #         try:
-    #             # Resize để xử lý nhanh hơn
-    #             h, w, _ = img_cv.shape
-    #             img_resized = cv2.resize(img_cv, (256, int(256 * h/w)))
-
-    #             segmented_img = segment_image_hybrid(img_resized)
-
-    #             # Hiển thị
-    #             display_col1, display_col2 = st.columns(2)
-    #             with display_col1:
-    #                 st.image(img_resized, channels="BGR", caption="Ảnh gốc (resized)")
-    #             with display_col2:
-    #                 st.image(segmented_img, channels="BGR", caption="Ảnh đã phân vùng")
-
-    #             st.info(
-    #             """
-    #             **Giải thích:**
-    #             - Phương pháp này sử dụng thuật toán gom cụm (DBSCAN + Fuzzy C-Means) để nhóm các pixel có màu sắc tương tự nhau.
-    #             - Các vùng có màu khác biệt (được tô màu ngẫu nhiên) có thể là các vùng lỗi hoặc các vùng có đặc điểm bề mặt khác thường.
-    #             """
-    #             )
-
-    #         except Exception as e:
-    #             st.error(f"Đã xảy ra lỗi khi phân vùng: {e}")
-
-else:
-    st.info("Vui lòng tải lên một ảnh để bắt đầu phân tích.")
+if __name__ == "__main__":
+    main()
